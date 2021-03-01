@@ -40,13 +40,24 @@ N.B. This is an updated version of my previous script "AutoMapUnifiedGroupDrives
 
 param
 (
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     $TenantID,
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     $ClientID,
-    [Parameter(Mandatory = $true)]
-    $ClientSecret
+    [Parameter(Mandatory = $false)]
+    $ClientSecret,
+    [Parameter(Mandatory = $false)]
+    $ExcludeSiteList
 )
+
+# Pull TenantID, ClientID, ClientSecret from DattoRMM variable registry
+# https://www.magitekai.com/#/blog/datto-rmm/2020/workaround-missing-variables
+    $envRegPath = 'HKLM:\SOFTWARE\CentraStage\Env'
+    If (-not ($TenantID)) { $TenantID = (Get-ItemPropertyValue -Path $envRegPath -Name 'AzureAD_TenantID') }
+    If (-not ($ClientID)) { $ClientID = (Get-ItemPropertyValue -Path $envRegPath -Name 'ODriveAutoMap_ClientID') }
+    If (-not ($ClientSecret)) {$ClientSecret = (Get-ItemPropertyValue -Path $envRegPath -Name 'ODriveAutoMap_ClientSecret') }
+    # If (-not ($ExcludeSiteList)) { $ExcludeSiteList = (Get-ItemPropertyValue -Path $envRegPath -Name 'ODriveAutoMap_ExcludeSiteList') }
+
 
 ####################################################
 #
@@ -1126,8 +1137,20 @@ namespace RunAsUser
 $runningContext = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 # Checks running if as SYSTEM (by SID) and runs it as the user instead
 If ($runningContext.User -eq 'S-1-5-18') {
+    
+    #Allow Read Access to Authenticated Users (PolicyPak blocks read access to scripts by default)
+    $BuiltInAuthUsersSID = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-11'
+    $acl = Get-Acl $PSCommandPath
+    $acl.SetAccessRuleProtection($true,$true)
+    $acl | Set-Acl $PSCommandPath
+    $acl = Get-Acl $PSCommandPath
+    $rule = New-Object -TypeName System.Security.AccessControl.FileSystemAccessRule -ArgumentList $BuiltInAuthUsersSID, 'Read', 'Allow'
+    $acl.SetAccessRule($rule)
+    $acl | Set-Acl -Path $PSCommandPath
+    
+    #PolicyPak names the temp script with curly braces so we need to single quote it
     $ScriptBlock = {
-        & $PSScriptRoot\OneDrive-AutoMapper.ps1 -TenantID $TenantID -ClientID $ClientID -ClientSecret $ClientSecret
+        & '$PSCommandPath' -TenantID $TenantID -ClientID $ClientID -ClientSecret $ClientSecret
     }
     Invoke-AsCurrentUser -UseWindowsPowerShell -NonElevatedSession -ScriptBlock $ScriptBlock
 }
